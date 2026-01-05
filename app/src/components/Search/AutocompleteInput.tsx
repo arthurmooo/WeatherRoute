@@ -69,16 +69,24 @@ export function AutocompleteInput({ label, placeholder, onSelect, className }: A
                 {label}
             </label>
             <div className="relative group">
-                <div className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-blue-400 transition-colors">
+                <div className={cn(
+                    "absolute left-3 top-1/2 -translate-y-1/2 transition-colors",
+                    query.length > 2 ? "text-blue-400" : "text-slate-400 group-focus-within:text-blue-400"
+                )}>
                     <Search size={18} />
                 </div>
                 <input
                     type="text"
                     value={query}
-                    onChange={(e) => setQuery(e.target.value)}
+                    onChange={(e) => {
+                        setQuery(e.target.value);
+                    }}
                     onFocus={() => query.length >= 2 && setIsOpen(true)}
                     placeholder={placeholder}
-                    className="w-full pl-10 pr-10 py-3 bg-slate-700/50 rounded-xl border border-white/10 text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all text-sm"
+                    className={cn(
+                        "w-full pl-10 pr-10 py-3 bg-slate-700/50 rounded-xl border text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all text-sm",
+                        query.length > 2 ? "border-blue-500/30" : "border-white/10"
+                    )}
                 />
                 {query && (
                     <button
@@ -102,8 +110,11 @@ export function AutocompleteInput({ label, placeholder, onSelect, className }: A
                             {suggestions.map((s, i) => (
                                 <button
                                     key={i}
-                                    onClick={() => handleSelect(s)}
-                                    className="w-full px-4 py-3 text-left hover:bg-slate-700/50 flex items-start gap-3 transition-colors border-b border-white/5 last:border-0"
+                                    onMouseDown={(e) => {
+                                        e.preventDefault(); // Prevent input blur
+                                        handleSelect(s);
+                                    }}
+                                    className="w-full px-4 py-3 text-left hover:bg-slate-700/50 flex items-start gap-3 transition-colors border-b border-white/5 last:border-0 focus:outline-none focus:bg-slate-700/50"
                                 >
                                     <div className="mt-0.5 text-blue-400">
                                         <MapPin size={16} />
@@ -115,6 +126,7 @@ export function AutocompleteInput({ label, placeholder, onSelect, className }: A
                                         </span>
                                     </div>
                                 </button>
+
                             ))}
                         </div>
                     )}

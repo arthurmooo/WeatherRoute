@@ -2,12 +2,9 @@ import axios from 'axios';
 
 const ORS_API_KEY = import.meta.env.VITE_ORS_API_KEY;
 
-// OpenRouteService Instance
+// OpenRouteService Instance (no default Authorization header to avoid CORS issues on geocoding)
 const orsClient = axios.create({
     baseURL: 'https://api.openrouteservice.org',
-    headers: {
-        Authorization: ORS_API_KEY,
-    },
 });
 
 // Open-Meteo Instance
@@ -56,6 +53,61 @@ export interface AutocompleteSuggestion {
     postcode?: string;
     city?: string;
 }
+
+/**
+ * Calculate a weather score based on WMO weather codes.
+ * Higher score = better weather (0-100 scale)
+ */
+const calculateWeatherScore = (weather: WeatherData | null): number => {
+    if (!weather) return 50; // Neutral if no data
+
+    let score = 100;
+
+    // Weather code penalties (WMO codes)
+    const code = weather.weatherCode;
+    if ([0, 1].includes(code)) {
+        // Clear/Mostly clear - Best
+        score -= 0;
+    } else if ([2, 3].includes(code)) {
+        // Partly cloudy / Overcast
+        score -= 10;
+    } else if ([45, 48].includes(code)) {
+        // Fog
+        score -= 30;
+    } else if ([51, 53, 55, 56, 57].includes(code)) {
+        // Drizzle
+        score -= 25;
+    } else if ([61, 63, 65, 66, 67].includes(code)) {
+        // Rain
+        score -= 40;
+    } else if ([71, 73, 75, 77].includes(code)) {
+        // Snow
+        score -= 50;
+    } else if ([80, 81, 82].includes(code)) {
+        // Rain showers
+        score -= 35;
+    } else if ([85, 86].includes(code)) {
+        // Snow showers
+        score -= 45;
+    } else if ([95, 96, 99].includes(code)) {
+        // Thunderstorm
+        score -= 60;
+    }
+
+    // Precipitation probability penalty
+    if (weather.precipitationProb > 70) {
+        score -= 20;
+    } else if (weather.precipitationProb > 40) {
+        score -= 10;
+    }
+
+    // Cloud cover penalty (minor)
+    if (weather.cloudCover > 80) {
+        score -= 5;
+    }
+
+    return Math.max(0, Math.min(100, score));
+};
 
 export const api = {
     autocomplete: async (query: string): Promise<AutocompleteSuggestion[]> => {
@@ -118,6 +170,10 @@ export const api = {
                 [start.lng, start.lat],
                 [end.lng, end.lat],
             ],
+        }, {
+            headers: {
+                Authorization: ORS_API_KEY,
+            },
         });
 
         const mainFeature = geojson.features[0];
@@ -204,19 +260,159 @@ export const api = {
         }
     },
 
-    getOptimalDeparture: async (_start: GeoPoint, _end: GeoPoint, windowStartHour: number, windowEndHour: number): Promise<{ time: string, score: number } | null> => {
-        // Naive implementation: Check every hour in the window
-        const checks = [];
-        const now = new Date();
-
-        for (let h = windowStartHour; h <= windowEndHour; h++) {
-            const departTime = new Date(now);
-            departTime.setHours(h, 0, 0, 0);
-            // Simulate score for MVP
-            checks.push(Promise.resolve({ time: departTime.toISOString(), score: Math.floor(Math.random() * 100) }));
+    /**
+     * Get route with weather for a specific departure time
+     */
+    getRouteWithDepartureTime: async (start: GeoPoint, end: GeoPoint, departureTime: Date): Promise<RouteData> => {
+        if (!ORS_API_KEY || ORS_API_KEY.includes('YOUR_')) {
+            throw new Error('API Key Missing');
         }
 
-        const results = await Promise.all(checks);
-        return results.sort((a, b) => b.score - a.score)[0] || null;
+        const { data: geojson } = await orsClient.post('/v2/directions/driving-car/geojson', {
+            coordinates: [
+                [start.lng, start.lat],
+                [end.lng, end.lat],
+            ],
+        }, {
+            headers: {
+                Authorization: ORS_API_KEY,
+            },
+        });
+
+        const mainFeature = geojson.features[0];
+        const { duration, distance } = mainFeature.properties.summary;
+        const allCoordinates = mainFeature.geometry.coordinates;
+
+        const SEGMENT_DURATION = 1800;
+        const segmentCount = Math.max(1, Math.ceil(duration / SEGMENT_DURATION));
+
+        const weatherPromises: Promise<WeatherData | null>[] = [];
+        const segmentsCoords: number[][][] = [];
+
+        for (let i = 0; i < segmentCount; i++) {
+            const startIdx = Math.floor((i / segmentCount) * (allCoordinates.length - 1));
+            const endIdx = Math.floor(((i + 1) / segmentCount) * (allCoordinates.length - 1));
+
+            const segmentCoordinates = allCoordinates.slice(startIdx, endIdx + 2);
+            segmentsCoords.push(segmentCoordinates);
+
+            const midIdx = Math.floor((startIdx + endIdx) / 2);
+            const [midLng, midLat] = allCoordinates[midIdx];
+
+            const timeOffsetSeconds = (duration / segmentCount) * (i + 0.5);
+            const estimatedTime = new Date(departureTime.getTime() + timeOffsetSeconds * 1000);
+            const isoHour = estimatedTime.toISOString().slice(0, 13) + ':00';
+
+            weatherPromises.push(api.getWeather(midLat, midLng, isoHour));
+        }
+
+        const weatherResults = await Promise.all(weatherPromises);
+
+        const features: RouteSegment[] = segmentsCoords.map((coords, i) => ({
+            type: 'Feature',
+            properties: {
+                weather: weatherResults[i],
+                segmentIndex: i
+            },
+            geometry: {
+                type: 'LineString',
+                coordinates: coords
+            }
+        }));
+
+        return {
+            type: 'FeatureCollection',
+            features,
+            summary: { duration, distance },
+            bbox: mainFeature.bbox
+        };
+    },
+
+    /**
+     * Find the optimal departure time within a given window.
+     * Uses simplified sampling to minimize API calls.
+     */
+    getOptimalDeparture: async (
+        start: GeoPoint,
+        end: GeoPoint,
+        windowStartHour: number,
+        windowEndHour: number
+    ): Promise<{ time: string; score: number; label: string }[]> => {
+        console.log("🚀 Starting weather optimization for route:", start, "to", end);
+        console.log(`Looking for departures between ${windowStartHour}h and ${windowEndHour}h`);
+
+        const now = new Date();
+        const results: { time: string; score: number; label: string }[] = [];
+
+        // Get route geometry once (static, doesn't depend on departure time)
+        console.log("Fetching base route for geometry...");
+        try {
+            const requestBody = {
+                coordinates: [
+                    [start.lng, start.lat],
+                    [end.lng, end.lat],
+                ],
+            };
+            console.log("ORS Request Body:", JSON.stringify(requestBody));
+
+            const { data: geojson } = await orsClient.post('/v2/directions/driving-car/geojson', requestBody, {
+                headers: {
+                    Authorization: ORS_API_KEY,
+                },
+            });
+            console.log("ORS Response received. Distance:", geojson.features[0].properties.summary.distance);
+
+            const mainFeature = geojson.features[0];
+            const { duration } = mainFeature.properties.summary;
+            const allCoordinates = mainFeature.geometry.coordinates;
+
+            // Sample 3 points along the route for weather checks
+            const samplePoints = [
+                allCoordinates[0],
+                allCoordinates[Math.floor(allCoordinates.length / 2)],
+                allCoordinates[allCoordinates.length - 1]
+            ];
+
+            // Check each hour in the window
+            for (let h = windowStartHour; h <= windowEndHour; h++) {
+                const departTime = new Date(now);
+                departTime.setHours(h, 0, 0, 0);
+
+                // Demo Mode: Allow checking past hours for today to ensure results are always shown
+                // if (departTime < now) continue;
+
+                // Get weather at sample points for this departure time
+                const weatherPromises = samplePoints.map((coord, idx) => {
+                    const timeOffsetSeconds = (duration * idx) / 2; // start, mid, end
+                    const estimatedTime = new Date(departTime.getTime() + timeOffsetSeconds * 1000);
+                    // Use force UTC date for API to avoid timezone confusion, but simplistic approach
+                    const isoHour = estimatedTime.toISOString().slice(0, 13) + ':00';
+                    return api.getWeather(coord[1], coord[0], isoHour);
+                });
+
+                const weatherData = await Promise.all(weatherPromises);
+                const scores = weatherData.map(w => calculateWeatherScore(w));
+                const avgScore = Math.round(scores.reduce((a, b) => a + b, 0) / scores.length);
+
+                const label = departTime.toLocaleTimeString('fr-FR', {
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+
+                results.push({
+                    time: departTime.toISOString(),
+                    score: avgScore,
+                    label
+                });
+            }
+
+            console.log(`Optimization complete. Found ${results.length} options.`);
+            // Sort by score (best first)
+            return results.sort((a, b) => b.score - a.score);
+
+        } catch (error) {
+            console.error("Optimization failed:", error);
+            throw error;
+        }
     }
 };
