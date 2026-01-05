@@ -4,7 +4,7 @@ import { api } from './services/api';
 import type { GeoPoint } from './services/api';
 import { useTripStore } from './store/useTripStore';
 import { AutocompleteInput } from './components/Search/AutocompleteInput';
-import { CloudRain, Wind, Sun, Navigation, Clock, Zap, ChevronDown, ChevronUp, Sparkles, ArrowUpDown, Calendar, MapPin, Plus, X } from 'lucide-react';
+import { CloudRain, Wind, Sun, Navigation, Clock, Zap, ChevronDown, ChevronUp, Sparkles, ArrowUpDown, Calendar, Plus, X } from 'lucide-react';
 
 interface DepartureOption {
   time: string;
@@ -14,7 +14,7 @@ interface DepartureOption {
 
 function App() {
   const {
-    setRoute, setLoading, setPoints, isLoading, error, setError, route, swapPoints, selectedDate, setSelectedDate,
+    setRoutes, setLoading, setPoints, isLoading, error, setError, routes, selectRoute, selectedRouteIndex, swapPoints, selectedDate, setSelectedDate,
     waypoints, addWaypoint, removeWaypoint, updateWaypoint
   } = useTripStore();
 
@@ -34,6 +34,11 @@ function App() {
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [selectedDeparture, setSelectedDeparture] = useState<string | null>(null);
 
+  // UI State
+  const [showAlternatives, setShowAlternatives] = useState(false);
+
+  const selectedRoute = routes[selectedRouteIndex] || null;
+
   const getValidWaypoints = () => waypoints.filter(wp => wp.location !== null).map(wp => wp.location!);
 
   const handleSearch = async () => {
@@ -48,14 +53,14 @@ function App() {
       setPoints(startPoint, endPoint);
       const validWaypoints = getValidWaypoints();
 
-      let routeData;
+      let fetchedRoutes;
       if (selectedDate) {
-        routeData = await api.getRouteWithDepartureTime(startPoint, endPoint, selectedDate, validWaypoints);
+        fetchedRoutes = await api.getRouteWithDepartureTime(startPoint, endPoint, selectedDate, validWaypoints);
       } else {
-        routeData = await api.getRoute(startPoint, endPoint, validWaypoints);
+        fetchedRoutes = await api.getRoute(startPoint, endPoint, validWaypoints);
       }
 
-      setRoute(routeData);
+      setRoutes(fetchedRoutes);
     } catch (e: any) {
       console.error(e);
       setError(e.message || "Erreur lors du calcul de l'itinéraire");
@@ -101,13 +106,13 @@ function App() {
     try {
       setPoints(startPoint, endPoint);
       const validWaypoints = getValidWaypoints();
-      const routeData = await api.getRouteWithDepartureTime(
+      const fetchedRoutes = await api.getRouteWithDepartureTime(
         startPoint,
         endPoint,
         new Date(option.time),
         validWaypoints
       );
-      setRoute(routeData);
+      setRoutes(fetchedRoutes);
     } catch (e: any) {
       console.error(e);
       setError(e.message || "Erreur lors du calcul de l'itinéraire");
@@ -246,7 +251,6 @@ function App() {
                   </button>
                 </div>
 
-                {/* Date Picker (Optional) */}
                 {/* Date & Time Pickers */}
                 <div className="bg-slate-700/30 p-3 rounded-xl border border-white/5 flex flex-col gap-2">
                   <div className="flex items-center gap-2 mb-1">
@@ -426,16 +430,85 @@ function App() {
               )}
             </div>
 
-            {/* Mini Stats (if route exists) */}
-            {route && (
+            {/* Multiple Routes Selection */}
+            {routes.length > 1 && (
+              <div className="animate-in fade-in slide-in-from-bottom-2 space-y-2">
+                <button
+                  onClick={() => setShowAlternatives(!showAlternatives)}
+                  className="w-full flex items-center justify-between p-2 text-xs text-slate-500 font-bold uppercase hover:bg-slate-700/30 rounded-lg transition-colors"
+                >
+                  <span>Itinéraires alternatifs ({routes.length - 1})</span>
+                  {showAlternatives ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                </button>
+
+                {(showAlternatives || selectedRouteIndex !== 0) && (
+                  <div className="grid grid-cols-1 gap-2">
+                    {routes.map((r, i) => (
+                      <button
+                        key={i}
+                        onClick={() => selectRoute(i)}
+                        className={`p-3 rounded-2xl border transition-all text-left group
+                            ${selectedRouteIndex === i
+                            ? 'bg-blue-600 text-white border-blue-500 shadow-lg shadow-blue-900/40'
+                            : 'bg-slate-700/30 text-slate-400 border-white/5 hover:bg-slate-700/50 hover:border-white/10'
+                          }`}
+                      >
+                        <div className="flex justify-between items-center mb-1">
+                          <span className="font-bold text-sm">Itinéraire {i + 1}</span>
+                          {selectedRouteIndex === i && <div className="w-2 h-2 rounded-full bg-white" />}
+                        </div>
+                        <div className="flex gap-4 text-xs opacity-90">
+                          <span className="font-medium">{formatDuration(r.summary.duration)}</span>
+                          <span className="opacity-50">|</span>
+                          <span>{(r.summary.distance / 1000).toFixed(0)} km</span>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Navigation Button (Visible if route selected) */}
+            {selectedRoute && (
+              <div className="animate-in fade-in slide-in-from-bottom-3 pt-2">
+                <button
+                  onClick={() => {
+                    if (!startPoint || !endPoint) return;
+
+                    const origin = `${startPoint.lat},${startPoint.lng}`;
+                    const destination = `${endPoint.lat},${endPoint.lng}`;
+
+                    // Format waypoints: lat,lng|lat,lng
+                    const waypointsStr = getValidWaypoints()
+                      .map(wp => `${wp.lat},${wp.lng}`)
+                      .join('|');
+
+                    let url = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&travelmode=driving`;
+                    if (waypointsStr) {
+                      url += `&waypoints=${waypointsStr}`;
+                    }
+
+                    window.open(url, '_blank');
+                  }}
+                  className="w-full py-4 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl font-bold shadow-lg shadow-emerald-900/40 transition-all active:scale-95 flex items-center justify-center gap-2"
+                >
+                  <Navigation size={18} fill="currentColor" />
+                  <span>Naviguer avec Google Maps</span>
+                </button>
+              </div>
+            )}
+
+            {/* Mini Stats (Only if single route or alternatives hidden) */}
+            {selectedRoute && (routes.length <= 1 || !showAlternatives) && (
               <div className="pt-4 border-t border-white/5 grid grid-cols-2 gap-3 animate-in fade-in slide-in-from-bottom-2">
                 <div className="bg-slate-700/30 p-3 rounded-2xl border border-white/5">
                   <p className="text-[10px] text-slate-500 font-bold uppercase mb-1">Distance</p>
-                  <p className="text-xl font-bold">{(route.summary.distance / 1000).toFixed(0)} <span className="text-xs text-slate-500">km</span></p>
+                  <p className="text-xl font-bold">{(selectedRoute.summary.distance / 1000).toFixed(0)} <span className="text-xs text-slate-500">km</span></p>
                 </div>
                 <div className="bg-slate-700/30 p-3 rounded-2xl border border-white/5">
                   <p className="text-[10px] text-slate-500 font-bold uppercase mb-1">Temps</p>
-                  <p className="text-xl font-bold">{formatDuration(route.summary.duration)}</p>
+                  <p className="text-xl font-bold">{formatDuration(selectedRoute.summary.duration)}</p>
                 </div>
               </div>
             )}

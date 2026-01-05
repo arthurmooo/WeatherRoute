@@ -10,14 +10,20 @@ export interface TripWaypoint {
 interface TripState {
     startPoint: GeoPoint | null;
     endPoint: GeoPoint | null;
-    route: RouteData | null;
+
+    // Multiple Routes Support
+    routes: RouteData[];
+    selectedRouteIndex: number;
+
     weatherData: any[] | null;
 
     isLoading: boolean;
     error: string | null;
 
     setPoints: (start: GeoPoint, end: GeoPoint) => void;
-    setRoute: (route: RouteData) => void;
+    setRoutes: (routes: RouteData[]) => void;
+    selectRoute: (index: number) => void;
+
     setWeather: (data: any[]) => void;
     setLoading: (loading: boolean) => void;
     setError: (error: string | null) => void;
@@ -36,13 +42,16 @@ interface TripState {
 export const useTripStore = create<TripState>((set) => ({
     startPoint: null,
     endPoint: null,
-    route: null,
+    routes: [],
+    selectedRouteIndex: 0,
     weatherData: null,
     isLoading: false,
     error: null,
 
     setPoints: (start, end) => set({ startPoint: start, endPoint: end }),
-    setRoute: (route) => set({ route }),
+    setRoutes: (routes) => set({ routes, selectedRouteIndex: 0 }), // Reset index on new routes
+    selectRoute: (index) => set({ selectedRouteIndex: index }),
+
     setWeather: (data) => set({ weatherData: data }),
     setLoading: (isLoading) => set({ isLoading }),
     setError: (error) => set({ error }),
@@ -51,7 +60,7 @@ export const useTripStore = create<TripState>((set) => ({
     swapPoints: () => set((state) => ({
         startPoint: state.endPoint,
         endPoint: state.startPoint,
-        route: null
+        routes: [] // Clear routes on swap
     })),
     selectedDate: null,
     setSelectedDate: (date: Date | null) => set({ selectedDate: date }),

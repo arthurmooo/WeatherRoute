@@ -49,6 +49,57 @@ export interface AutocompleteSuggestion {
     city?: string;
 }
 
+// Helper to calculate weather for a single route feature
+const processRouteFeature = async (feature: any, departureTime: Date): Promise<RouteData> => {
+    const { duration, distance } = feature.properties.summary;
+    const allCoordinates = feature.geometry.coordinates; // Array of [lng, lat]
+
+    // SEGMENTATION (Every 30 mins)
+    const SEGMENT_DURATION = 1800; // 30 mins in seconds
+    const segmentCount = Math.max(1, Math.ceil(duration / SEGMENT_DURATION));
+
+    const weatherPromises: Promise<WeatherData | null>[] = [];
+    const segmentsCoords: number[][][] = [];
+
+    for (let i = 0; i < segmentCount; i++) {
+        const startIdx = Math.floor((i / segmentCount) * (allCoordinates.length - 1));
+        const endIdx = Math.floor(((i + 1) / segmentCount) * (allCoordinates.length - 1));
+
+        const segmentCoordinates = allCoordinates.slice(startIdx, endIdx + 2);
+        segmentsCoords.push(segmentCoordinates);
+
+        const midIdx = Math.floor((startIdx + endIdx) / 2);
+        const [midLng, midLat] = allCoordinates[midIdx];
+
+        const timeOffsetSeconds = (duration / segmentCount) * (i + 0.5);
+        const estimatedTime = new Date(departureTime.getTime() + timeOffsetSeconds * 1000);
+        const isoHour = estimatedTime.toISOString().slice(0, 13) + ':00';
+
+        weatherPromises.push(api.getWeather(midLat, midLng, isoHour));
+    }
+
+    const weatherResults = await Promise.all(weatherPromises);
+
+    const features: RouteSegment[] = segmentsCoords.map((coords, i) => ({
+        type: 'Feature',
+        properties: {
+            weather: weatherResults[i],
+            segmentIndex: i
+        },
+        geometry: {
+            type: 'LineString',
+            coordinates: coords
+        }
+    }));
+
+    return {
+        type: 'FeatureCollection',
+        features,
+        summary: { duration, distance },
+        bbox: feature.bbox
+    };
+};
+
 export const api = {
     autocomplete: async (query: string): Promise<AutocompleteSuggestion[]> => {
         if (!query || query.length < 2) return [];
@@ -98,7 +149,7 @@ export const api = {
         }
     },
 
-    getRoute: async (start: GeoPoint, end: GeoPoint, waypoints: GeoPoint[] = []): Promise<RouteData> => {
+    getRoute: async (start: GeoPoint, end: GeoPoint, waypoints: GeoPoint[] = []): Promise<RouteData[]> => {
         if (!ORS_API_KEY || ORS_API_KEY.includes('YOUR_')) {
             console.warn('Missing ORS API Key');
             throw new Error('API Key Missing');
@@ -110,68 +161,67 @@ export const api = {
             [end.lng, end.lat],
         ];
 
-        // 1. GET ROUTE (GeoJSON) from ORS
-        const { data: geojson } = await orsClient.post('/v2/directions/driving-car/geojson', {
-            coordinates,
-        }, {
-            headers: {
-                Authorization: ORS_API_KEY,
-            },
-        });
-
-        const mainFeature = geojson.features[0];
-        const { duration, distance } = mainFeature.properties.summary;
-        const allCoordinates = mainFeature.geometry.coordinates; // Array of [lng, lat]
-
-        // 2. SEGMENTATION (Every 30 mins)
-        const SEGMENT_DURATION = 1800; // 30 mins in seconds
-        const segmentCount = Math.max(1, Math.ceil(duration / SEGMENT_DURATION));
-
-        const weatherPromises: Promise<WeatherData | null>[] = [];
-        const segmentsCoords: number[][][] = [];
-
-        // Calculate start time (Now)
-        const startTime = new Date();
-
-        for (let i = 0; i < segmentCount; i++) {
-            const startIdx = Math.floor((i / segmentCount) * (allCoordinates.length - 1));
-            const endIdx = Math.floor(((i + 1) / segmentCount) * (allCoordinates.length - 1));
-
-            const segmentCoordinates = allCoordinates.slice(startIdx, endIdx + 2);
-            segmentsCoords.push(segmentCoordinates);
-
-            const midIdx = Math.floor((startIdx + endIdx) / 2);
-            const [midLng, midLat] = allCoordinates[midIdx];
-
-            const timeOffsetSeconds = (duration / segmentCount) * (i + 0.5);
-            const estimatedTime = new Date(startTime.getTime() + timeOffsetSeconds * 1000);
-            const isoHour = estimatedTime.toISOString().slice(0, 13) + ':00';
-
-            weatherPromises.push(api.getWeather(midLat, midLng, isoHour));
-        }
-
-        // 3. FETCH WEATHER
-        const weatherResults = await Promise.all(weatherPromises);
-
-        // 4. CONSTRUCT GEOJSON COLLECTION
-        const features: RouteSegment[] = segmentsCoords.map((coords, i) => ({
-            type: 'Feature',
-            properties: {
-                weather: weatherResults[i],
-                segmentIndex: i
-            },
-            geometry: {
-                type: 'LineString',
-                coordinates: coords
+        // Helper to fetch from ORS
+        const fetchOrsRoute = async (includeAlternatives: boolean) => {
+            const payload: any = { coordinates };
+            if (includeAlternatives && waypoints.length === 0) {
+                payload.alternative_routes = { target_count: 3 };
             }
-        }));
 
-        return {
-            type: 'FeatureCollection',
-            features,
-            summary: { duration, distance },
-            bbox: mainFeature.bbox
+            return orsClient.post('/v2/directions/driving-car/geojson', payload, {
+                headers: { Authorization: ORS_API_KEY },
+            });
         };
+
+        try {
+            // 1. Try to GET ROUTE (with alternatives if possible)
+            let geojson;
+            try {
+                const { data } = await fetchOrsRoute(true);
+                geojson = data;
+            } catch (error: any) {
+                // If 400 Bad Request and we tried alternatives, retry without them
+                if (error.response?.status === 400 && waypoints.length === 0) {
+                    console.warn("ORS 400 Error with alternatives. Retrying without alternatives...");
+                    const { data } = await fetchOrsRoute(false);
+                    geojson = data;
+                } else {
+                    throw error; // Re-throw other errors
+                }
+            }
+
+            // 2. Process all returned routes (features) WITH DEDUPLICATION
+            const uniqueFeatures: any[] = [];
+
+            for (const feature of geojson.features) {
+                const { duration, distance } = feature.properties.summary;
+
+                // Check if this route is too similar to an existing one
+                const isDuplicate = uniqueFeatures.some(existing => {
+                    const eSum = existing.properties.summary;
+                    const durationDiff = Math.abs(eSum.duration - duration);
+                    const distanceDiff = Math.abs(eSum.distance - distance);
+
+                    // Duplicate if duration difference < 10s AND distance difference < 50m
+                    // This handles slight API variations for the "same" visual route
+                    return durationDiff < 10 && distanceDiff < 50;
+                });
+
+                if (!isDuplicate) {
+                    uniqueFeatures.push(feature);
+                }
+            }
+
+            const startTime = new Date();
+            const routePromises = uniqueFeatures.map((feature: any) =>
+                processRouteFeature(feature, startTime)
+            );
+
+            return Promise.all(routePromises);
+        } catch (error: any) {
+            console.error("ORS API Error:", error.response?.data || error.message);
+            throw error; // Re-throw to be caught by App.tsx
+        }
     },
 
     getWeather: async (lat: number, lng: number, timeISO: string): Promise<WeatherData | null> => {
@@ -207,7 +257,7 @@ export const api = {
     /**
      * Get route with weather for a specific departure time
      */
-    getRouteWithDepartureTime: async (start: GeoPoint, end: GeoPoint, departureTime: Date, waypoints: GeoPoint[] = []): Promise<RouteData> => {
+    getRouteWithDepartureTime: async (start: GeoPoint, end: GeoPoint, departureTime: Date, waypoints: GeoPoint[] = []): Promise<RouteData[]> => {
         if (!ORS_API_KEY || ORS_API_KEY.includes('YOUR_')) {
             throw new Error('API Key Missing');
         }
@@ -218,65 +268,65 @@ export const api = {
             [end.lng, end.lat],
         ];
 
-        const { data: geojson } = await orsClient.post('/v2/directions/driving-car/geojson', {
-            coordinates,
-        }, {
-            headers: {
-                Authorization: ORS_API_KEY,
-            },
-        });
-
-        const mainFeature = geojson.features[0];
-        const { duration, distance } = mainFeature.properties.summary;
-        const allCoordinates = mainFeature.geometry.coordinates;
-
-        const SEGMENT_DURATION = 1800;
-        const segmentCount = Math.max(1, Math.ceil(duration / SEGMENT_DURATION));
-
-        const weatherPromises: Promise<WeatherData | null>[] = [];
-        const segmentsCoords: number[][][] = [];
-
-        for (let i = 0; i < segmentCount; i++) {
-            const startIdx = Math.floor((i / segmentCount) * (allCoordinates.length - 1));
-            const endIdx = Math.floor(((i + 1) / segmentCount) * (allCoordinates.length - 1));
-
-            const segmentCoordinates = allCoordinates.slice(startIdx, endIdx + 2);
-            segmentsCoords.push(segmentCoordinates);
-
-            const midIdx = Math.floor((startIdx + endIdx) / 2);
-            const [midLng, midLat] = allCoordinates[midIdx];
-
-            const timeOffsetSeconds = (duration / segmentCount) * (i + 0.5);
-            const estimatedTime = new Date(departureTime.getTime() + timeOffsetSeconds * 1000);
-            const isoHour = estimatedTime.toISOString().slice(0, 13) + ':00';
-
-            weatherPromises.push(api.getWeather(midLat, midLng, isoHour));
-        }
-
-        const weatherResults = await Promise.all(weatherPromises);
-
-        const features: RouteSegment[] = segmentsCoords.map((coords, i) => ({
-            type: 'Feature',
-            properties: {
-                weather: weatherResults[i],
-                segmentIndex: i
-            },
-            geometry: {
-                type: 'LineString',
-                coordinates: coords
+        // Helper to fetch from ORS
+        const fetchOrsRoute = async (includeAlternatives: boolean) => {
+            const payload: any = { coordinates };
+            if (includeAlternatives && waypoints.length === 0) {
+                payload.alternative_routes = { target_count: 3 };
             }
-        }));
 
-        return {
-            type: 'FeatureCollection',
-            features,
-            summary: { duration, distance },
-            bbox: mainFeature.bbox
+            return orsClient.post('/v2/directions/driving-car/geojson', payload, {
+                headers: { Authorization: ORS_API_KEY },
+            });
         };
+
+        try {
+            let geojson;
+            try {
+                const { data } = await fetchOrsRoute(true);
+                geojson = data;
+            } catch (error: any) {
+                // If 400 Bad Request and we tried alternatives, retry without them
+                if (error.response?.status === 400 && waypoints.length === 0) {
+                    console.warn("ORS 400 Error (Time) with alternatives. Retrying without alternatives...");
+                    const { data } = await fetchOrsRoute(false);
+                    geojson = data;
+                } else {
+                    throw error;
+                }
+            }
+
+            const uniqueFeatures: any[] = [];
+
+            for (const feature of geojson.features) {
+                const { duration, distance } = feature.properties.summary;
+
+                const isDuplicate = uniqueFeatures.some(existing => {
+                    const eSum = existing.properties.summary;
+                    const durationDiff = Math.abs(eSum.duration - duration);
+                    const distanceDiff = Math.abs(eSum.distance - distance);
+                    return durationDiff < 10 && distanceDiff < 50;
+                });
+
+                if (!isDuplicate) {
+                    uniqueFeatures.push(feature);
+                }
+            }
+
+            const routePromises = uniqueFeatures.map((feature: any) =>
+                processRouteFeature(feature, departureTime)
+            );
+
+            return Promise.all(routePromises);
+        } catch (error: any) {
+            console.error("ORS API Error (Time):", error.response?.data || error.message);
+            throw error;
+        }
     },
 
     /**
      * Find the optimal departure time within a given window.
+     * Note: Optimization currently considers only the PRIMARY route to save API calls.
      */
     getOptimalDeparture: async (
         start: GeoPoint,
@@ -295,7 +345,7 @@ export const api = {
                 [end.lng, end.lat],
             ];
 
-            // Get route geometry once
+            // Get route geometry once (No alternatives for optimization)
             const { data: geojson } = await orsClient.post('/v2/directions/driving-car/geojson', {
                 coordinates,
             }, {
