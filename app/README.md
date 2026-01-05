@@ -1,73 +1,73 @@
-# React + TypeScript + Vite
+# Météo Trajet (MVP)
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+Une application web qui permet aux vacanciers de visualiser les conditions météo exactes qu'ils rencontreront le long de leur route, synchronisées avec leur heure de passage.
 
-Currently, two official plugins are available:
+Promesse : **"Partez au meilleur moment, roulez sous le meilleur ciel."**
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
+## 🚀 Fonctionnalités Actuelles (Phase 2 terminée)
 
-## React Compiler
+### 1. Recherche d'itinéraire
+- Saisie avec autocomplétion (villes de France et d'Europe).
+- Calcul d'itinéraire voiture via OpenRouteService.
+- Affichage du tracé et des statistiques (durée, distance).
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### 2. Météo Synchronisée
+- Découpage du trajet en segments de 30 minutes.
+- Récupération de la météo précise (Open-Meteo) pour chaque segment à l'heure estimée de passage.
 
-## Expanding the ESLint configuration
+### 3. Optimisateur de Départ
+- Définition d'une plage horaire de départ (ex: 8h - 14h).
+- Analyse météo pour chaque heure de départ possible.
+- **Scoring intelligent** (0-100) prenant en compte : pluie, orages, brouillard, vent, soleil.
+- Suggestion du meilleur créneau.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
+## 🛠️ Installation & Démarrage
 
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
+### Pré-requis
+- Node.js 18+
+- Une clé API [OpenRouteService](https://openrouteservice.org/) (Gratuit).
 
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
+### Installation
 
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+cd app
+npm install
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+### Configuration
+Créer un fichier `.env` dans le dossier `app` :
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
-
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```env
+VITE_ORS_API_KEY=votre_cle_api_ici
 ```
+
+### Lancement
+
+```bash
+npm run dev
+```
+L'application sera accessible sur `http://localhost:5173`.
+
+### Tests
+
+Pour lancer les tests unitaires (notamment l'algorithme de scoring météo) :
+
+```bash
+npm run test
+# ou
+npx vitest
+```
+
+## 🏗️ Architecture Technique
+- **Frontend** : React + TypeScript + Vite
+- **State** : Zustand
+- **Map** : MapLibre GL / React-Map-GL
+- **APIs** : OpenRouteService (Route), Open-Meteo (Météo)
+- **Tests** : Vitest
+
+## 📅 Roadmap
+
+- [x] **Phase 1** : Squelette & APIs (Routing + Météo de base)
+- [x] **Phase 2** : Algorithme Core & Optimisateur de départ
+- [ ] **Phase 3** : Comparaison Modes (Train vs Voiture) & UI Polish
+- [ ] **Phase 4** : Déploiement & Optimisations finales

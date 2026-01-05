@@ -12,19 +12,32 @@ function cn(...inputs: ClassValue[]) {
 interface AutocompleteInputProps {
     label: string;
     placeholder: string;
-    onSelect: (point: GeoPoint) => void;
+    onSelect: (point: GeoPoint, label: string) => void;
     className?: string;
+    initialValue?: string; // New prop for setting initial text (e.g. after swap)
 }
 
-export function AutocompleteInput({ label, placeholder, onSelect, className }: AutocompleteInputProps) {
-    const [query, setQuery] = useState('');
+export function AutocompleteInput({ label, placeholder, onSelect, className, initialValue = '' }: AutocompleteInputProps) {
+    const [query, setQuery] = useState(initialValue);
+
+    // Update query if initialValue changes externally (e.g. swap)
+    useEffect(() => {
+        if (initialValue) setQuery(initialValue);
+    }, [initialValue]);
     const [suggestions, setSuggestions] = useState<AutocompleteSuggestion[]>([]);
     const [isOpen, setIsOpen] = useState(false);
     const [isLoading, setIsLoading] = useState(false);
     const containerRef = useRef<HTMLDivElement>(null);
+    const isSelection = useRef(false);
 
     useEffect(() => {
         const timer = setTimeout(async () => {
+            // Should skip search if valid selection was just made
+            if (isSelection.current) {
+                isSelection.current = false;
+                return;
+            }
+
             if (query.length >= 2) {
                 setIsLoading(true);
                 const results = await api.autocomplete(query);
@@ -52,15 +65,17 @@ export function AutocompleteInput({ label, placeholder, onSelect, className }: A
     }, []);
 
     const handleSelect = (suggestion: AutocompleteSuggestion) => {
+        isSelection.current = true; // Flag this update as a selection
         setQuery(suggestion.label);
         setIsOpen(false);
-        onSelect(suggestion.coordinates);
+        onSelect(suggestion.coordinates, suggestion.label);
     };
 
     const clear = () => {
         setQuery('');
         setSuggestions([]);
         setIsOpen(false);
+        onSelect(null as any); // Reset parent state if needed, though type might need adjustment
     };
 
     return (

@@ -30,7 +30,8 @@ export const MapView: React.FC = () => {
             ...f,
             properties: {
                 ...f.properties,
-                weatherCode: f.properties.weather?.weatherCode ?? -1
+                weatherCode: f.properties.weather?.weatherCode ?? -1,
+                isDay: f.properties.weather?.isDay ?? 1 // Default to day if missing
             }
         }));
 
@@ -50,12 +51,23 @@ export const MapView: React.FC = () => {
             'line-color': [
                 'match',
                 ['get', 'weatherCode'],
-                [0, 1], '#F59E0B',
+                // Clear / Mostly Clear
+                [0, 1], [
+                    'case',
+                    ['==', ['get', 'isDay'], 1], '#F59E0B', // Sunny (Day)
+                    '#312E81'  // Clear Night (Dark Indigo)
+                ],
+                // Variable
                 [2, 3], '#9CA3AF',
+                // Fog
                 [45, 48], '#71717A',
+                // Rain / Drizzle
                 [51, 53, 55, 61, 63, 65, 56, 57, 66, 67, 80, 81, 82], '#3B82F6',
+                // Snow
                 [71, 73, 75, 77, 85, 86], '#E5E7EB',
+                // Thunder
                 [95, 96, 99], '#7C3AED',
+                // Default
                 '#6366F1'
             ] as any // Bypass strict readonly type check from MapLibre
         },
@@ -103,6 +115,9 @@ export const MapView: React.FC = () => {
             <div className="absolute bottom-6 right-6 bg-slate-900/90 backdrop-blur border border-white/10 p-3 rounded-lg text-xs font-medium text-slate-300 space-y-2 shadow-xl">
                 <div className="flex items-center gap-2">
                     <div className="w-3 h-3 rounded-full bg-amber-500" /> <span>Soleil</span>
+                </div>
+                <div className="flex items-center gap-2">
+                    <div className="w-3 h-3 rounded-full bg-indigo-900 border border-white/20" /> <span>Nuit Claire</span>
                 </div>
                 <div className="flex items-center gap-2">
                     <div className="w-3 h-3 rounded-full bg-gray-400" /> <span>Nuageux</span>

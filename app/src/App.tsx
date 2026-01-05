@@ -4,7 +4,7 @@ import { api } from './services/api';
 import type { GeoPoint } from './services/api';
 import { useTripStore } from './store/useTripStore';
 import { AutocompleteInput } from './components/Search/AutocompleteInput';
-import { CloudRain, Wind, Sun, Navigation, Clock, Zap, ChevronDown, ChevronUp, Sparkles } from 'lucide-react';
+import { CloudRain, Wind, Sun, Navigation, Clock, Zap, ChevronDown, ChevronUp, Sparkles, ArrowUpDown, Calendar, MapPin, Plus, X } from 'lucide-react';
 
 interface DepartureOption {
   time: string;
@@ -13,10 +13,18 @@ interface DepartureOption {
 }
 
 function App() {
-  const { setRoute, setLoading, setPoints, isLoading, error, setError, route } = useTripStore();
+  const {
+    setRoute, setLoading, setPoints, isLoading, error, setError, route, swapPoints, selectedDate, setSelectedDate,
+    waypoints, addWaypoint, removeWaypoint, updateWaypoint
+  } = useTripStore();
 
   const [startPoint, setStartPointLocal] = useState<GeoPoint | null>(null);
+  const [startLabel, setStartLabel] = useState<string>('');
+
   const [endPoint, setEndPointLocal] = useState<GeoPoint | null>(null);
+  const [endLabel, setEndLabel] = useState<string>('');
+
+  const [isSwapping, setIsSwapping] = useState(false);
 
   // Departure Optimizer State
   const [showOptimizer, setShowOptimizer] = useState(false);
@@ -25,6 +33,8 @@ function App() {
   const [departureOptions, setDepartureOptions] = useState<DepartureOption[]>([]);
   const [isOptimizing, setIsOptimizing] = useState(false);
   const [selectedDeparture, setSelectedDeparture] = useState<string | null>(null);
+
+  const getValidWaypoints = () => waypoints.filter(wp => wp.location !== null).map(wp => wp.location!);
 
   const handleSearch = async () => {
     if (!startPoint || !endPoint) {
@@ -36,7 +46,15 @@ function App() {
     setError(null);
     try {
       setPoints(startPoint, endPoint);
-      const routeData = await api.getRoute(startPoint, endPoint);
+      const validWaypoints = getValidWaypoints();
+
+      let routeData;
+      if (selectedDate) {
+        routeData = await api.getRouteWithDepartureTime(startPoint, endPoint, selectedDate, validWaypoints);
+      } else {
+        routeData = await api.getRoute(startPoint, endPoint, validWaypoints);
+      }
+
       setRoute(routeData);
     } catch (e: any) {
       console.error(e);
@@ -57,7 +75,8 @@ function App() {
     setDepartureOptions([]);
 
     try {
-      const options = await api.getOptimalDeparture(startPoint, endPoint, windowStart, windowEnd);
+      const validWaypoints = getValidWaypoints();
+      const options = await api.getOptimalDeparture(startPoint, endPoint, windowStart, windowEnd, validWaypoints);
       setDepartureOptions(options);
 
       // Auto-select the best option and calculate its route
@@ -81,10 +100,12 @@ function App() {
 
     try {
       setPoints(startPoint, endPoint);
+      const validWaypoints = getValidWaypoints();
       const routeData = await api.getRouteWithDepartureTime(
         startPoint,
         endPoint,
-        new Date(option.time)
+        new Date(option.time),
+        validWaypoints
       );
       setRoute(routeData);
     } catch (e: any) {
@@ -109,6 +130,30 @@ function App() {
     return 'Défavorable';
   };
 
+  const formatDuration = (seconds: number) => {
+    const h = Math.floor(seconds / 3600);
+    const m = Math.round((seconds % 3600) / 60);
+    return `${h}h${m.toString().padStart(2, '0')}`;
+  };
+
+  const handleSwap = () => {
+    setIsSwapping(true);
+
+    // Swap Points
+    const tempPoint = startPoint;
+    setStartPointLocal(endPoint);
+    setEndPointLocal(tempPoint);
+
+    // Swap Labels
+    const tempLabel = startLabel;
+    setStartLabel(endLabel);
+    setEndLabel(tempLabel);
+
+    swapPoints();
+
+    setTimeout(() => setIsSwapping(false), 300);
+  };
+
   return (
     <div className="flex h-screen w-screen bg-slate-900 text-white overflow-hidden font-sans">
       {/* Sidebar / Overlay */}
@@ -130,22 +175,120 @@ function App() {
             </header>
 
             <div className="space-y-4 relative z-20">
-              <div className="relative z-30">
-                <AutocompleteInput
-                  label="Point de départ"
-                  placeholder="Ex: Paris, Lille..."
-                  onSelect={setStartPointLocal}
-                  className="z-30"
-                />
-              </div>
+              <div className="relative z-30 flex flex-col gap-2">
+                {/* Inputs Container with Swap Button */}
+                <div className="relative flex flex-col gap-2">
+                  <AutocompleteInput
+                    label="Point de départ"
+                    placeholder="Ex: Paris, Lille..."
+                    onSelect={(pt, label) => {
+                      setStartPointLocal(pt);
+                      setStartLabel(label);
+                    }}
+                    className={`z-50 transition-transform duration-300 ${isSwapping ? 'translate-y-12' : ''}`}
+                    initialValue={startLabel}
+                  />
 
-              <div className="relative z-20">
-                <AutocompleteInput
-                  label="Point d'arrivée"
-                  placeholder="Ex: Lyon, Marseille..."
-                  onSelect={setEndPointLocal}
-                  className="z-20"
-                />
+                  {/* Waypoints List */}
+                  {waypoints.map((wp, index) => (
+                    <div key={wp.id} className="relative flex items-center gap-2 animate-in slide-in-from-left-2 fade-in duration-300 group">
+                      <div className="absolute left-3 top-1/2 -translate-y-1/2 z-10 text-slate-500 flex flex-col items-center">
+                        <div className="w-0.5 h-full bg-slate-700 absolute -top-4 -bottom-4 -z-10" />
+                        <div className="w-1.5 h-1.5 rounded-full bg-slate-500 ring-4 ring-slate-800" />
+                      </div>
+                      <div className="flex-1 relative pl-6">
+                        <AutocompleteInput
+                          label={`Étape ${index + 1}`}
+                          placeholder="Ajouter une étape..."
+                          onSelect={(pt, label) => updateWaypoint(wp.id, pt, label)}
+                          initialValue={wp.label}
+                        />
+                      </div>
+                      <button
+                        onClick={() => removeWaypoint(wp.id)}
+                        className="p-2 text-slate-500 hover:text-red-400 hover:bg-red-400/10 rounded-full transition-colors opacity-0 group-hover:opacity-100"
+                        title="Supprimer l'étape"
+                      >
+                        <X size={16} />
+                      </button>
+                    </div>
+                  ))}
+
+                  {/* Add Waypoint Button */}
+                  <div className="flex justify-center -my-1 relative z-40">
+                    <button
+                      onClick={addWaypoint}
+                      className="p-1.5 bg-slate-700/50 hover:bg-blue-600/20 text-slate-400 hover:text-blue-400 rounded-full border border-dashed border-slate-600 hover:border-blue-500/50 transition-all active:scale-95 shadow-sm"
+                      title="Ajouter une étape"
+                    >
+                      <Plus size={14} />
+                    </button>
+                  </div>
+
+                  <AutocompleteInput
+                    label="Point d'arrivée"
+                    placeholder="Ex: Lyon, Marseille..."
+                    onSelect={(pt, label) => {
+                      setEndPointLocal(pt);
+                      setEndLabel(label);
+                    }}
+                    className={`z-20 transition-transform duration-300 ${isSwapping ? '-translate-y-12' : ''}`}
+                    initialValue={endLabel}
+                  />
+
+                  {/* Swap Button */}
+                  <button
+                    onClick={handleSwap}
+                    className="absolute -right-12 top-1/2 -translate-y-1/2 z-40 p-2 bg-slate-700/80 backdrop-blur rounded-full border border-white/10 hover:bg-slate-600 transition-colors shadow-lg group"
+                    title="Inverser départ et arrivée"
+                  >
+                    <ArrowUpDown size={16} className={`text-blue-400 group-hover:text-blue-300 transition-transform duration-300 ${isSwapping ? 'rotate-180' : ''}`} />
+                  </button>
+                </div>
+
+                {/* Date Picker (Optional) */}
+                {/* Date & Time Pickers */}
+                <div className="bg-slate-700/30 p-3 rounded-xl border border-white/5 flex flex-col gap-2">
+                  <div className="flex items-center gap-2 mb-1">
+                    <Calendar size={14} className="text-slate-400" />
+                    <label className="text-[10px] text-slate-500 font-bold uppercase">Date & Heure de départ (Optionnel)</label>
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="date"
+                      className="flex-1 bg-slate-700/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50 [color-scheme:dark]"
+                      onChange={(e) => {
+                        const dateStr = e.target.value;
+                        if (!dateStr) {
+                          setSelectedDate(null);
+                          return;
+                        }
+                        const current = selectedDate || new Date();
+                        const timeStr = current.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }); // Keep current time
+                        const [hours, minutes] = timeStr.split(':').map(Number);
+                        const newDate = new Date(dateStr);
+                        newDate.setHours(hours || 0, minutes || 0);
+                        setSelectedDate(newDate);
+                      }}
+                      value={selectedDate ? selectedDate.toLocaleDateString('en-CA') : ''}
+                    />
+                    <input
+                      type="time"
+                      className="w-24 bg-slate-700/50 border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500/50 [color-scheme:dark]"
+                      onChange={(e) => {
+                        const timeStr = e.target.value;
+                        if (!timeStr) return; // Don't clear if time invalid
+
+                        const current = selectedDate || new Date();
+                        const [hours, minutes] = timeStr.split(':').map(Number);
+                        const newDate = new Date(current);
+                        newDate.setHours(hours, minutes);
+                        setSelectedDate(newDate);
+                      }}
+                      value={selectedDate ? selectedDate.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' }) : ''}
+                    />
+                  </div>
+                </div>
               </div>
 
               {/* Departure Optimizer Toggle */}
@@ -228,8 +371,8 @@ function App() {
                           key={option.time}
                           onClick={() => handleSelectDeparture(option)}
                           className={`w-full p-3 rounded-xl border transition-all flex items-center justify-between ${selectedDeparture === option.time
-                              ? 'bg-blue-600/20 border-blue-500/50 shadow-[0_0_15px_rgba(37,99,235,0.2)]'
-                              : 'bg-slate-700/30 border-white/5 hover:border-white/20'
+                            ? 'bg-blue-600/20 border-blue-500/50 shadow-[0_0_15px_rgba(37,99,235,0.2)]'
+                            : 'bg-slate-700/30 border-white/5 hover:border-white/20'
                             }`}
                         >
                           <div className="flex items-center gap-3">
@@ -292,7 +435,7 @@ function App() {
                 </div>
                 <div className="bg-slate-700/30 p-3 rounded-2xl border border-white/5">
                   <p className="text-[10px] text-slate-500 font-bold uppercase mb-1">Temps</p>
-                  <p className="text-xl font-bold">{(route.summary.duration / 3600).toFixed(1)} <span className="text-xs text-slate-500">h</span></p>
+                  <p className="text-xl font-bold">{formatDuration(route.summary.duration)}</p>
                 </div>
               </div>
             )}
