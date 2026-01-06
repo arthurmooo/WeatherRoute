@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { calculateWeatherScore, WeatherData } from './weatherScoring';
+import { calculateWeatherScore, type WeatherData } from './weatherScoring';
 
 describe('calculateWeatherScore', () => {
     const baseWeather: WeatherData = {
@@ -7,7 +7,8 @@ describe('calculateWeatherScore', () => {
         temperature: 20,
         precipitationProb: 0,
         weatherCode: 0, // Clear sky
-        cloudCover: 0
+        cloudCover: 0,
+        isDay: 1
     };
 
     it('should return 100 for perfect weather', () => {

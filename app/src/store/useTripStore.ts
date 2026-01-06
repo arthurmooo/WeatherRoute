@@ -36,7 +36,7 @@ interface TripState {
     setWaypoints: (waypoints: TripWaypoint[]) => void;
     addWaypoint: () => void;
     removeWaypoint: (id: string) => void;
-    updateWaypoint: (id: string, location: GeoPoint, label: string) => void;
+    updateWaypoint: (id: string, location: GeoPoint | null, label: string) => void;
 }
 
 export const useTripStore = create<TripState>((set) => ({

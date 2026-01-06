@@ -12,7 +12,7 @@ function cn(...inputs: ClassValue[]) {
 interface AutocompleteInputProps {
     label: string;
     placeholder: string;
-    onSelect: (point: GeoPoint, label: string) => void;
+    onSelect: (point: GeoPoint | null, label: string) => void;
     className?: string;
     initialValue?: string; // New prop for setting initial text (e.g. after swap)
 }
@@ -75,12 +75,12 @@ export function AutocompleteInput({ label, placeholder, onSelect, className, ini
         setQuery('');
         setSuggestions([]);
         setIsOpen(false);
-        onSelect(null as any); // Reset parent state if needed, though type might need adjustment
+        onSelect(null, '');
     };
 
     return (
         <div className={cn("relative w-full space-y-1", className)} ref={containerRef}>
-            <label className="text-xs font-semibold text-slate-400 uppercase tracking-wider px-1">
+            <label className="text-xs font-bold text-slate-300 uppercase tracking-wider px-1">
                 {label}
             </label>
             <div className="relative group">
@@ -99,8 +99,8 @@ export function AutocompleteInput({ label, placeholder, onSelect, className, ini
                     onFocus={() => query.length >= 2 && setIsOpen(true)}
                     placeholder={placeholder}
                     className={cn(
-                        "w-full pl-10 pr-10 py-3 bg-slate-700/50 rounded-xl border text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all text-sm",
-                        query.length > 2 ? "border-blue-500/30" : "border-white/10"
+                        "w-full pl-10 pr-10 py-3 bg-slate-800 rounded-xl border text-white font-medium placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all text-sm shadow-sm",
+                        query.length > 2 ? "border-blue-500/50" : "border-white/5"
                     )}
                 />
                 {query && (
@@ -135,8 +135,8 @@ export function AutocompleteInput({ label, placeholder, onSelect, className, ini
                                         <MapPin size={16} />
                                     </div>
                                     <div className="flex flex-col">
-                                        <span className="text-sm font-medium text-white truncate">{s.label}</span>
-                                        <span className="text-[10px] text-slate-400 uppercase tracking-tight">
+                                        <span className="text-sm font-bold text-white truncate">{s.label}</span>
+                                        <span className="text-[10px] text-slate-300 uppercase tracking-tight font-medium">
                                             {s.postcode ? `${s.postcode} • ` : ''}{s.city || 'Lieu'}
                                         </span>
                                     </div>

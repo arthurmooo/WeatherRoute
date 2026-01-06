@@ -4,12 +4,20 @@ import type { MapRef, LayerProps } from 'react-map-gl/maplibre';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { useTripStore } from '../../store/useTripStore';
 
-// CartoDB Voyager Tiles
-const MAP_STYLE = 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json';
+// CartoDB Tiles
+const MAP_STYLE_LIGHT = 'https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json';
+const MAP_STYLE_DARK = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json';
 
 export const MapView: React.FC = () => {
-    const { startPoint, endPoint, routes, selectedRouteIndex, waypoints } = useTripStore();
+    const { startPoint, endPoint, routes, selectedRouteIndex, waypoints, selectedDate } = useTripStore();
     const mapRef = React.useRef<MapRef>(null);
+
+    // Determine if it's night time
+    const isNight = React.useMemo(() => {
+        const date = selectedDate || new Date();
+        const hour = date.getHours();
+        return hour >= 20 || hour < 7;
+    }, [selectedDate]);
 
     const activeRoute = routes[selectedRouteIndex] || null;
 
@@ -102,7 +110,7 @@ export const MapView: React.FC = () => {
                     zoom: 5
                 }}
                 style={{ width: '100%', height: '100%' }}
-                mapStyle={MAP_STYLE}
+                mapStyle={isNight ? MAP_STYLE_DARK : MAP_STYLE_LIGHT}
                 attributionControl={false}
             >
                 <NavigationControl position="top-right" />
@@ -141,7 +149,11 @@ export const MapView: React.FC = () => {
             </Map>
 
             {/* Legend */}
-            <div className="absolute bottom-6 right-6 bg-slate-900/90 backdrop-blur border border-white/10 p-3 rounded-lg text-xs font-medium text-slate-300 space-y-2 shadow-xl">
+            <div className={`absolute bottom-6 right-6 backdrop-blur border p-3 rounded-lg text-xs font-medium space-y-2 shadow-xl ${
+                isNight 
+                    ? 'bg-slate-900/90 border-white/10 text-slate-300' 
+                    : 'bg-white/90 border-slate-200 text-slate-700'
+            }`}>
                 <div className="flex items-center gap-2">
                     <div className="w-3 h-3 rounded-full bg-amber-500" /> <span>Soleil</span>
                 </div>
